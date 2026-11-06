@@ -21,11 +21,11 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 
 核心能力包括：
 
-- **一条命令跑通全栈**：`rvocs.sh` 统一入口，自检（doctor）→ 宿主机依赖（install）→ 镜像（download/build）→ 验收（verify）→ 服务（deploy），阶段可拆分、可断点续跑。
+- **一条命令跑通全栈**：`rvocs.sh` 统一入口，自检（doctor）→ 宿主机依赖（install）→ 镜像（download/build）→ 版本与产物查询（version / list-releases）；容器启动见厂商仓库 README 的 `docker run` 示例（`--deploy` 暂未开放）。
 - **跨架构、跨发行版**：架构差异在 `patches/<arch>/`，发行版差异在宿主机打包层（`host/`）；当前以 Ubuntu 26.04 LTS 为参考系统，Fedora / RHEL / openRuyi 按同一模型接入，上层命令不变。
 - **补丁即资产**：跨架构适配不在业务代码里打洞，而是沉淀为各厂商仓库的 `patches/<arch>/` 补丁系列，可审查、可回放、可回馈上游。
-- **版本可追溯**：每个仓库的 `VERSION` + `manifest.yaml`（上游 pin）+ gitlink 三方对齐；`baseline.sh` 一条命令切换上游基线，`--bom` 输出全栈版本矩阵。
-- **产物开箱即用**：镜像发布在华为云 SWR 公共命名空间，宿主机 `.deb` 发布在 Gitee Releases；`--download` 拉到本地即为统一命名的产物。
+- **版本可追溯**：每个仓库的 `VERSION` + `manifest.yaml`（上游 pin）+ gitlink 三方对齐；`baseline.sh` 一条命令切换上游基线，`--version` 查看组件 pin、`--list-releases` 查看已发布产物。
+- **产物开箱即用**：镜像发布在华为云 SWR 公共命名空间，宿主机 `.deb` 发布在 GitHub Releases；`--download` 拉到本地即为统一命名的产物。
 - **多加速器接口**：厂商仓库按 `rvocs-hcs-{vendor}` 命名接入，一条 target 声明能力矩阵即可扩展新设备，动作语义保持一致。
 
 > RVOCs 打通系统与软件栈，提供经过验证的 RISC-V 计算基础；上层的资源编排与模型服务由 RISMA 等平台在其上构建。
@@ -49,8 +49,8 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    rvocs-main（统一入口）                     │
-│         rvocs.sh  doctor/install/download/build/             │
-│                  verify/deploy/version/bom                   │
+│      rvocs.sh  doctor/install/download/build/clone/         │
+│                version/list-releases/list-targets           │
 └──────────────┬──────────────────────────────┬───────────────┘
                ▼                              ▼
 ┌──────────────────────────────┐  ┌──────────────────────────┐
@@ -65,7 +65,7 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 ┌─────────────────────────────────────────────────────────────┐
 │  rvocs-vllm-tt-riscv64:v0.1.0      （SWR 公共命名空间）      │
 │  rvocs-vllm-therock10.0-r9700-riscv64:v0.1.0                │
-│  rvocs-tt-deps_v0.1.0_riscv64.deb  （Gitee Releases）       │
+│  rvocs-tt-deps_v0.1.0_riscv64.deb  （GitHub Releases）      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -79,7 +79,7 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 | Tenstorrent TT-Metal / TT-NN | Wormhole / Blackhole 系列（n300 等） | 🔶 适配中 | ✅ 已支持 | 🔲 待定 | 🔶 组件验收通过，端到端待真卡验证 |
 | CUDA / 国产加速卡 | 按实际设备适配 | 🔲 待定 | 🔲 待定 | 🔲 待定 | 🔲 预留 target 扩展 |
 
-三个架构列表示该软件栈在各宿主架构上的状态：**已支持**＝可构建并部署；**适配中**＝构建与组件验收通过、端到端验证推进中；**待支持 / 待定**＝尚未适配。
+三个架构列表示该软件栈在各宿主架构上的状态：**已支持**＝可构建并跑通端到端；**适配中**＝构建与组件验收通过、端到端验证推进中；**待支持 / 待定**＝尚未适配。
 
 覆盖架构：**riscv64 / x86_64 / aarch64**（目标架构须与宿主一致，不做交叉构建）。
 
@@ -94,7 +94,7 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 
 ### 前置条件
 
-1. 一台目标架构的 Linux 主机（riscv64 / x86_64 / aarch64），Ubuntu 24.04 / 26.04。
+1. 一台目标架构的 Linux 主机（riscv64 / x86_64 / aarch64），参考系统 Ubuntu 26.04 LTS。
 2. 对应加速卡：AMD 需 riscv64 内核 ≥ `7.0.0-31-generic`（旧内核 amdgpu 有缺陷）；Tenstorrent 需先装驱动。
 3. Docker（构建与部署）；驱动安装需要 sudo。
 
@@ -103,17 +103,19 @@ RVOCs（RISC-V Open Computing System）是一套**软硬件一体的开放异构
 ```bash
 git clone https://github.com/RVOCs-org/rvocs-main.git
 cd rvocs-main
+./rvocs.sh --clone         # 按需获取厂商仓库
 ./rvocs.sh --doctor        # 环境自检：PASS/WARN/FAIL，并给出下一步命令
+./rvocs.sh --list-releases # 已发布的镜像 tag 与 .deb 全名
 ```
 
 ### ② 安装宿主机依赖（Tenstorrent 路径）
 
 ```bash
 # 自动从 Releases 下载最新 .deb 并安装（tt-kmd 驱动 + tt-smi/tt-flash/tt-topology + 1G 大页）
-./rvocs.sh --target tt-host --arch riscv --install --yes
+./rvocs.sh --target tt-host --arch riscv --install
 ```
 
-### ③ 获取镜像并验收
+### ③ 获取或构建镜像
 
 ```bash
 # AMD 路径（参考实现）：拉已发布镜像，或源码构建（首次约 20 小时）
@@ -122,17 +124,14 @@ cd rvocs-main
 
 # Tenstorrent 路径
 ./rvocs.sh --target tt-stack --arch riscv --download # rvocs-vllm-tt-riscv64:v0.1.0
-./rvocs.sh --target tt-stack --arch riscv --verify
 ```
 
 也可以直接按 tag 拉取镜像：`./rvocs.sh --download rvocs-vllm-tt-riscv64:v0.1.0`。
 
 ### ④ 启动 OpenAI 兼容服务
 
-```bash
-./rvocs.sh --target tt-stack --deploy --dry-run   # 先预览启动命令
-./rvocs.sh --target tt-stack --deploy --yes       # 启动（默认模型 Qwen3-8B，端口 8000）
-```
+`--deploy` 暂未开放；镜像拉取/构建后按 `rvocs-hcs-tenstorrent` README 的 `docker run`
+示例启动（默认模型 Qwen3-8B，端口 8000）。服务起来后可直接调用：
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -146,11 +145,12 @@ curl http://localhost:8000/v1/chat/completions \
 
 | 文档 | 内容 |
 |---|---|
-| [快速开始](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUICKSTART.md) | 分场景上手：自检、驱动、镜像、部署 |
+| [快速开始](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUICKSTART.md) | 分场景上手：自检、驱动、镜像与手动启动 |
 | [CLI 参考](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/CLI.md) | 全部动作、参数与环境变量 |
 | [开发架构](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/ARCHITECTURE.md) | 分层设计与 target 接入取舍 |
 | [仓库说明](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/REPOS.md) | 各仓库职责与产物 |
 | [适配问题记录](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUIRKS.md) | RISC-V 已知问题与处置 |
+| [产物清单](https://github.com/RVOCs-org/rvocs-main/blob/main/RELEASES.list) | 已发布镜像 tag 与 `.deb` 全名（`--list-releases` 数据源） |
 | [发布说明](https://github.com/RVOCs-org/rvocs-main/blob/main/RELEASENOTES.md) | 已发布产物与上游基线 |
 
 ## 🤝 参与贡献

@@ -25,8 +25,9 @@ served through an OpenAI-compatible API.
 Core capabilities:
 
 - **One command, whole stack**: `rvocs.sh` is the single entry point —
-  doctor → install (host packages) → download/build (images) → verify → deploy.
-  Stages are separable and resumable.
+  doctor → install (host packages) → download/build (images) → version /
+  list-releases. Starting the container is documented as a `docker run` example in
+  the vendor repository README (`--deploy` is not exposed yet).
 - **Cross-architecture, cross-distribution**: architecture differences live in
   `patches/<arch>/`, distribution differences in the host packaging layer (`host/`).
   Ubuntu 26.04 LTS is the reference system today; Fedora / RHEL / openRuyi plug into the
@@ -34,9 +35,10 @@ Core capabilities:
 - **Patches are the asset**: adaptation is not sprinkled through application code; it is a
   reviewable, replayable patch series per vendor repository, upstreamable.
 - **Traceable versions**: `<repo>/VERSION` + `manifest.yaml` (upstream pins) + gitlinks stay
-  in sync; `baseline.sh` switches a baseline in one command and `--bom` prints the matrix.
+  in sync; `baseline.sh` switches a baseline in one command, `--version` shows the
+  component pins and `--list-releases` lists the published artifacts.
 - **Artifacts ready to use**: images are published to a public Huawei Cloud SWR namespace,
-  host `.deb` packages to Gitee Releases; `--download` leaves a consistently named artifact
+  host `.deb` packages to GitHub Releases; `--download` leaves a consistently named artifact
   on the local machine.
 - **Accelerator-agnostic interface**: vendor repositories follow `rvocs-hcs-{vendor}`; a new
   device needs a capability matrix in the target registry, with unchanged action semantics.
@@ -64,8 +66,8 @@ device software stack:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    rvocs-main (single entry)                │
-│         rvocs.sh  doctor/install/download/build/            │
-│                  verify/deploy/version/bom                  │
+│      rvocs.sh  doctor/install/download/build/clone/         │
+│                version/list-releases/list-targets           │
 └──────────────┬──────────────────────────────┬───────────────┘
                ▼                              ▼
 ┌──────────────────────────────┐  ┌──────────────────────────┐
@@ -80,7 +82,7 @@ device software stack:
 ┌─────────────────────────────────────────────────────────────┐
 │  rvocs-vllm-tt-riscv64:v0.1.0        (public SWR namespace) │
 │  rvocs-vllm-therock10.0-r9700-riscv64:v0.1.0                │
-│  rvocs-tt-deps_v0.1.0_riscv64.deb    (Gitee Releases)       │
+│  rvocs-tt-deps_v0.1.0_riscv64.deb    (GitHub Releases)      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -95,7 +97,7 @@ Design trade-offs and the target integration mechanism:
 | Tenstorrent TT-Metal / TT-NN | Wormhole / Blackhole family (n300, …) | 🔶 in progress | ✅ supported | 🔲 TBD | 🔶 component acceptance pass, end-to-end pending real-card validation |
 | CUDA / domestic accelerators | per-device adaptation | 🔲 TBD | 🔲 TBD | 🔲 TBD | 🔲 target extension reserved |
 
-Each architecture column shows the state of that stack on that host architecture: **supported** = builds and deploys; **in progress** = build and component acceptance pass with end-to-end validation underway; **pending / TBD** = not ported yet.
+Each architecture column shows the state of that stack on that host architecture: **supported** = builds and runs end to end; **in progress** = build and component acceptance pass with end-to-end validation underway; **pending / TBD** = not ported yet.
 
 Architectures: **riscv64 / x86_64 / aarch64** (target arch must match the host; no cross builds).
 
@@ -114,17 +116,19 @@ The eight-card server is a hardware capability; multi-card validation is in prog
 
 ### Prerequisites
 
-1. A Linux host of the target architecture (riscv64 / x86_64 / aarch64), Ubuntu 24.04 / 26.04.
+1. A Linux host of the target architecture (riscv64 / x86_64 / aarch64); Ubuntu 26.04 LTS is the reference system.
 2. The accelerator: AMD needs a riscv64 kernel ≥ `7.0.0-31-generic` (older kernels ship a
    broken amdgpu); Tenstorrent needs its driver first.
-3. Docker (build and deployment); installing drivers requires sudo.
+3. Docker (build and manual container start); installing drivers requires sudo.
 
 ### ① Fetch the entry point and self-check
 
 ```bash
 git clone https://github.com/RVOCs-org/rvocs-main.git
 cd rvocs-main
+./rvocs.sh --clone         # fetch the vendor repositories
 ./rvocs.sh --doctor        # PASS/WARN/FAIL plus the commands to run next
+./rvocs.sh --list-releases # published image tags and .deb names
 ```
 
 ### ② Install host dependencies (Tenstorrent path)
@@ -132,10 +136,10 @@ cd rvocs-main
 ```bash
 # downloads the newest .deb from Releases and installs it
 # (tt-kmd driver + tt-smi/tt-flash/tt-topology + 1G hugepages)
-./rvocs.sh --target tt-host --arch riscv --install --yes
+./rvocs.sh --target tt-host --arch riscv --install
 ```
 
-### ③ Fetch images and verify
+### ③ Fetch or build images
 
 ```bash
 # AMD path (reference): pull the published image, or build from source (~20 h first time)
@@ -144,7 +148,6 @@ cd rvocs-main
 
 # Tenstorrent path
 ./rvocs.sh --target tt-stack --arch riscv --download # rvocs-vllm-tt-riscv64:v0.1.0
-./rvocs.sh --target tt-stack --arch riscv --verify
 ```
 
 A single image can also be pulled by tag:
@@ -152,10 +155,9 @@ A single image can also be pulled by tag:
 
 ### ④ Start the OpenAI-compatible service
 
-```bash
-./rvocs.sh --target tt-stack --deploy --dry-run   # preview the run command
-./rvocs.sh --target tt-stack --deploy --yes       # start (default model Qwen3-8B, port 8000)
-```
+`--deploy` is not exposed yet; start the pulled/built image with the `docker run`
+example in the `rvocs-hcs-tenstorrent` README (default model Qwen3-8B, port 8000).
+Once it is up:
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -170,11 +172,12 @@ More paths (GPU smoke test, offline install, proxy modes):
 
 | Document | Content |
 |---|---|
-| [Quick start](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUICKSTART.md) | scenario walkthroughs: self-check, drivers, images, deployment |
+| [Quick start](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUICKSTART.md) | scenario walkthroughs: self-check, drivers, images, manual start |
 | [CLI reference](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/CLI.md) | every action, option and environment variable |
 | [Architecture](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/ARCHITECTURE.md) | layering and target integration trade-offs |
 | [Repositories](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/REPOS.md) | responsibilities and artifacts per repository |
 | [Known quirks](https://github.com/RVOCs-org/rvocs-main/blob/main/docs/QUIRKS.md) | RISC-V issues and workarounds |
+| [Release list](https://github.com/RVOCs-org/rvocs-main/blob/main/RELEASES.list) | published image tags and `.deb` names (used by `--list-releases`) |
 | [Release notes](https://github.com/RVOCs-org/rvocs-main/blob/main/RELEASENOTES.md) | published artifacts and upstream baselines |
 
 ## 🤝 Contributing
